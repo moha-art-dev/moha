@@ -169,7 +169,36 @@ function moha_ui_field_widget_info() {
  * Implements hook_field_widget_form().
  */
 function moha_ui_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
+  libraries_load(__MOHA_UI);
+  drupal_add_js(MOHA_UI__PATH.'/js/moha_ui.js');
 
+  $widget = array(
+    '#markup' => '
+      <div class="weui-cells weui-cells_form" id="uploaderCustom">
+        <div class="weui-uploader__bd">
+          <ul class="weui-uploader__files" id="uploaderCustomFiles"></ul>
+          <div class="weui-uploader__input-box">
+            <input id="uploaderCustomInput" class="weui-uploader__input" type="file" accept="image/*"  multiple="">
+          </div>
+        </div>
+      </div>',
+  );
+
+  $element += $widget;
+
+  $form['moha_ui_file_values'] = array(
+    '#type' => 'hidden',
+    '#value' => isset($form_state['input']['moha_ui_file_values'])?$form_state['input']['moha_ui_file_values']:'',
+  );
+
+  $form['moha_ui_field_name'] = array(
+    '#type' => 'hidden',
+    '#value' => $field['field_name'],
+  );
+
+  $form['#submit'][] = 'moha_ui_field_widget_submit';
+
+  return $element;
 }
 
 /**
@@ -261,3 +290,18 @@ function moha_ui_webform_component_info() {
   return $components;
 }
 
+function moha_ui_field_widget_submit($form, &$form_state) {
+
+  //$form_field_name = $form_state['values']['moha_ui_field_name'];
+  //$file_directory = $form_state['field'][$form_field_name]['und']['instance']['settings']['file_directory'];
+  //$file_extensions = $form_state['field'][$form_field_name]['und']['instance']['settings']['file_extensions'];
+
+  $file_values = explode(',,',$form_state['values']['moha_ui_file_values']);
+  foreach($file_values as $content){
+    $file_contents = file_get_contents($content);
+    $file = file_save_data($file_contents);
+    //todo: save the fid in associated field, field name $form_field_name 
+  }
+
+
+}
