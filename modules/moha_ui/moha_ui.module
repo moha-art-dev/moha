@@ -188,7 +188,7 @@ function moha_ui_field_widget_form(&$form, &$form_state, $field, $instance, $lan
 
   $form['moha_ui_file_values'] = array(
     '#type' => 'hidden',
-    '#value' => isset($form_state['input']['moha_ui_file_values'])?$form_state['input']['moha_ui_file_values']:'',
+    '#value' => NULL,
   );
 
   $form['moha_ui_field_name'] = array(
@@ -296,7 +296,7 @@ function moha_ui_field_widget_submit($form, &$form_state) {
   //$file_directory = $form_state['field'][$form_field_name]['und']['instance']['settings']['file_directory'];
   //$file_extensions = $form_state['field'][$form_field_name]['und']['instance']['settings']['file_extensions'];
 
-  $file_values = explode(',,',$form_state['values']['moha_ui_file_values']);
+  $file_values = explode(',,',$form_state['input']['moha_ui_file_values']);
   foreach($file_values as $content){
     $file_contents = file_get_contents($content);
     $file = file_save_data($file_contents);
