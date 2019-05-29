@@ -287,8 +287,10 @@ function moha_ui_webform_component_info() {
 function moha_ui_field_widget_submit($form, &$form_state) {
 
   $field_name = $form_state['values']['moha_ui_field_name'];
-  //$file_directory = $form_state['field'][$field_name]['und']['instance']['settings']['file_directory'];
-  //$file_extensions = $form_state['field'][$field_name]['und']['instance']['settings']['file_extensions'];
+  $language = $form[$field_name]['#language'];
+  //$file_directory = $form_state['field'][$field_name][$language]['instance']['settings']['file_directory'];
+  //$file_extensions = $form_state['field'][$field_name][$language]['instance']['settings']['file_extensions'];
+
 
   if($form_state['input']['moha_ui_file_values']) {
     $file_values = explode(',,',$form_state['input']['moha_ui_file_values']);
@@ -299,7 +301,13 @@ function moha_ui_field_widget_submit($form, &$form_state) {
       $fids[] =  $file->fid;
     }
     if(!empty($fids)){
-      $form_state['moha_ui_fids'] = $fids;
+      if(empty($form_state['input'][$field_name][$language]['fid'])){
+        $form_state['moha_ui_fids'] = $fids;
+      } else {
+        $old_fids = explode(' ', $form_state['input'][$field_name][$language]['fid']);
+        $form_state['moha_ui_insert_fids'] = $fids;
+        $form_state['moha_ui_fids'] = array_merge($old_fids, $fids);
+      }
       $form_state['rebuild'] = true;
     }
   }
@@ -318,14 +326,26 @@ function moha_ui_file_value(&$element, $input = FALSE, $form_state = NULL) {
       $entity = $element['#entity'];
       $field_name = $element['#field_name'];
       $langcode = $element['#language'];
-      $field = $form_state['field'][$field_name];
+      $field = $form_state['field'][$field_name][$langcode]['instance'];
       $instance = $form_state['field'][$field_name][$langcode]['instance'];
+
       $items = array();
       foreach($form_state['moha_ui_fids'] as $key => $fid ){
-        $items[$key] =array('fid'=> $fid);
+        $items[$key] = array('fid'=> $fid);
         $entity->$field_name[$langcode][$key]['fid'] = $fid;
       }
-      file_field_insert($entity_type, $entity, $field, $instance, $langcode,$items);
+//      if(empty($form_state['input'][$field_name][$langcode]['fid'])){
+//        file_field_insert($entity_type, $entity, $field, $instance, $langcode,$items);
+//      } else {
+//        list($id, $vid, $bundle) = entity_extract_ids($entity_type, $entity);
+//        // Add a new usage of each uploaded file.
+//        foreach ($items as $item) {
+//          if(in_array($item['fid'], $form_state['moha_ui_insert_fids'])){
+//            $file = (object) $item;
+//            file_usage_add($file, 'file', $entity_type, $id);
+//          }
+//        }
+//      }
 
       //save field value record
       $info = field_info_field($field_name);
@@ -334,6 +354,16 @@ function moha_ui_file_value(&$element, $input = FALSE, $form_state = NULL) {
       $return = $items;
       drupal_goto($form_state['redirect']);
     }
+  } else {
+    $field_name = $element['#field_name'];
+    if(isset($element['#entity']->$field_name)){
+      $field_values = $element['#entity']->$field_name;
+      //$return = $field_values[$element['#language']];
+      foreach($field_values[$element['#language']] as $value){
+        $return['fid'][] = $value['fid'];
+      }
+    }
+
   }
 
   return $return;
@@ -346,22 +376,30 @@ function moha_ui_file_process($element, &$form_state, $form) {
   $element['#id'] .= '-upload';
   $fid = isset($element['#value']['fid']) ? $element['#value']['fid'] : 0;
 
+  $element['fid'] = array(
+    '#type' => 'hidden',
+    '#value' => $fid,
+  );
+
+  $image_display='';
+  if($fid){
+    foreach($fid as $item_fid){
+      $file = file_load($item_fid);
+      $fileUrl = file_create_url($file->uri);
+      $image_display .= '<li class="weui-uploader__file" style="background-image:url(' . $fileUrl . '");></li>';
+    }
+  }
+
   $element['markup'] = array(
     '#markup' => '
       <div class="weui-cells weui-cells_form" id="uploaderCustom">
         <div class="weui-uploader__bd">
-          <ul class="weui-uploader__files" id="uploaderCustomFiles"></ul>
+          <ul class="weui-uploader__files" id="uploaderCustomFiles">' . $image_display . '</ul>
           <div class="weui-uploader__input-box">
             <input id="uploaderCustomInput" class="weui-uploader__input" type="file" accept="image/*"  multiple="">
           </div>
         </div>
       </div>',
-  );
-
-
-  $element['fid'] = array(
-    '#type' => 'hidden',
-    '#value' => $fid,
   );
 
   return $element;
