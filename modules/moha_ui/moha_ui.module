@@ -123,6 +123,9 @@ function moha_ui_theme($existing, $type, $theme, $path) {
       'template' => 'elements/moha_ui_rating',
       'rent element' => 'element',
     ),
+    'moha_ui_file_widget_multiple' => array(
+      'render element' => 'element',
+    ),
   );
 
   return $templates;
@@ -171,106 +174,40 @@ function moha_ui_field_widget_info() {
 function moha_ui_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
   libraries_load(__MOHA_UI);
   drupal_add_js(MOHA_UI__PATH.'/js/moha_ui.js');
-  //dpm($delta, 'delta');
-  //dpm($items, 'items');
 
-  $defaults = array(
-    'fid' => 0,
-    'display' => !empty($field['settings']['display_default']),
-    'description' => '',
-  );
+  // Add display_field setting to field because file_field_widget_form() assumes it is set.
+  $field['settings']['display_field'] = 0;
 
-  $default_items = array();
-  for($i = 0; $i < $field['cardinality']; $i++){
-    $default_items[$i] = $defaults;
+  $elements = moha_ui_custom_file_field_widget_form($form, $form_state, $field, $instance, $langcode, $items, $delta, $element);
+  $settings = $instance['settings'];
+
+
+  foreach (element_children($elements) as $delta) {
+    // Add upload resolution validation.
+    if ($settings['max_resolution'] || $settings['min_resolution']) {
+      $elements[$delta]['#upload_validators']['file_validate_image_resolution'] = array($settings['max_resolution'], $settings['min_resolution']);
+    }
+
+    // If not using custom extension validation, ensure this is an image.
+    $supported_extensions = array('png', 'gif', 'jpg', 'jpeg');
+    $extensions = isset($elements[$delta]['#upload_validators']['file_validate_extensions'][0]) ? $elements[$delta]['#upload_validators']['file_validate_extensions'][0] : implode(' ', $supported_extensions);
+    $extensions = array_intersect(explode(' ', $extensions), $supported_extensions);
+    $elements[$delta]['#upload_validators']['file_validate_extensions'][0] = implode(' ', $extensions);
+
+    $elements[$delta]['#process'][] = 'moha_ui_file_process';
+
   }
-
-  // Load the items for form rebuilds from the field state as they might not be
-  // in $form_state['values'] because of validation limitations. Also, they are
-  // only passed in as $items when editing existing entities.
-  $field_state = field_form_get_state($element['#field_parents'], $field['field_name'], $langcode, $form_state);
-  if (isset($field_state['items'])) {
-    $items = $field_state['items'];
-  }
-
-  // Essentially we use the managed_file type, extended with some enhancements.
-  $element_info = element_info('managed_file');
-  $widget = array(
-    '#type' => 'managed_file',
-    '#upload_location' => file_field_widget_uri($field, $instance),
-    '#upload_validators' => file_field_widget_upload_validators($field, $instance),
-    '#value_callback' => 'moha_ui_field_widget_value',
-    '#process' => array_merge($element_info['#process'],array('image_field_widget_process','moha_ui_file_process')),
-    '#progress_indicator' => $instance['widget']['settings']['progress_indicator'],
-    // Allows this field to return an array instead of a single value.
-    '#extended' => TRUE,
-  );
-  $element += $widget;
-
-  $elements['moha_ui_preview'] = array(
-    '#markup' => '<div style="overflow:auto;"><ul id="moha_ui_preview"></ul></div>',
-  );
 
   if ($field['cardinality'] == 1) {
-    // Set the default value.
-    $element['#default_value'] = !empty($items) ? $items[0] : $defaults;
     // If there's only one field, return it as delta 0.
-    if (empty($element['#default_value']['fid'])) {
-      $element['#description'] = theme('file_upload_help', array('description' => $element['#description'], 'upload_validators' => $element['#upload_validators']));
+    if (empty($elements[0]['#default_value']['fid'])) {
+      $elements[0]['#description'] = theme('file_upload_help', array('description' => field_filter_xss($instance['description']), 'upload_validators' => $elements[0]['#upload_validators']));
     }
-    $elements = array($element);
   }
   else {
-    if(empty($items)){
-      foreach ($default_items as $item) {
-        $element['#delta'] = $delta;
-        $elements[$delta] = $element;
-        $elements[$delta]['#default_value'] = $item;
-        $elements[$delta]['#weight'] = $delta;
-        $elements[$delta]['#description'] = theme('file_upload_help', array('description' => $element['#description'], 'upload_validators' => $element['#upload_validators']));
-        $delta++;
-      }
-    } else {
-      // If there are multiple values, add an element for each existing one.
-      foreach ($items as $item) {
-        $element['#delta'] = $delta;
-        $elements[$delta] = $element;
-        $elements[$delta]['#default_value'] = $item;
-        $elements[$delta]['#weight'] = $delta;
-        $delta++;
-      }
-    }
-
-
-    if (($field['cardinality'] == FIELD_CARDINALITY_UNLIMITED || $delta < $field['cardinality']) && empty($form_state['programmed'])) {
-      $element['#delta'] = $delta;
-      $elements[$delta] = $element;
-      $elements[$delta]['#default_value'] = $defaults;
-      $elements[$delta]['#weight'] = $delta;
-      //$elements[$delta]['#required'] = ($element['#required'] && $delta == 0);
-    }
-    // The group of elements all-together need some extra functionality
-    // after building up the full list (like draggable table rows).
-    $elements['#file_upload_delta'] = $delta;
-    //$elements['#theme'] = 'file_widget_multiple';
-    $elements['#theme_wrappers'] = array('fieldset');
-    //$elements['#process'] = array('file_field_widget_process_multiple');
-    $elements['#title'] = $element['#title'];
-    $elements['#description'] = $element['#description'];
-    $elements['#field_name'] = $element['#field_name'];
-    $elements['#language'] = $element['#language'];
-    //$elements['#display_field'] = $field['settings']['display_field'];
-
-    // Add some properties that will eventually be added to the file upload
-    // field. These are added here so that they may be referenced easily through
-    // a hook_form_alter().
-    $elements['#file_upload_title'] = t('Add a new file');
-    $elements['#file_upload_description'] = theme('file_upload_help', array('description' => '', 'upload_validators' => $elements[0]['#upload_validators']));
-
+    $elements['#file_upload_description'] = theme('file_upload_help', array('upload_validators' => $elements[0]['#upload_validators']));
   }
-
   return $elements;
-
 }
 
 /**
@@ -368,26 +305,130 @@ function moha_ui_field_widget_value($element, $input = FALSE, $form_state = NULL
 }
 
 
-function moha_ui_file_process($element, $form_state, $form) {
-//  if($element['#delta']== 0){
-//    dpm($element, 'before');
-//  }
+function moha_ui_file_process($element, &$form_state, $form) {
+
+  // Exclude the markup element, which added by custom.
+  if($element['#type'] != 'markup' && $element['fid']['#value'] == 0){
+    $element['upload']['#prefix'] = '<div class="weui-cells weui-cells_form" id="uploaderCustom">
+      <div class="weui-uploader__bd">
+      <div class="weui-uploader__input-box">';
+    $element['upload']['#suffix'] = '</div></div></div>';
+    $element['upload']['#attributes'] = array('class' => array('weui-uploader__input'));
+    $element['upload_button']['#type'] = 'hidden';
+  }
+
+  return $element;
+}
 
 
- if($element['fid']['#value'] == 0){
-   $element['upload']['#prefix'] = '<div class="weui-cells weui-cells_form" id="uploaderCustom">
-     <div class="weui-uploader__bd">
-     <div class="weui-uploader__input-box">';
-   $element['upload']['#suffix'] = '</div></div></div>';
-   $element['upload']['#attributes'] = array('class' => array('weui-uploader__input'));
-   $element['upload_button']['#type'] = 'hidden';
- }
+function moha_ui_custom_file_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element){
+
+  $defaults = array(
+    'fid' => 0,
+    'display' => !empty($field['settings']['display_default']),
+    'description' => '',
+  );
+
+  $default_items = array();
+  for($i = 0; $i < $field['cardinality']; $i++){
+    $default_items[$i] = $defaults;
+  }
+
+  // Load the items for form rebuilds from the field state as they might not be
+  // in $form_state['values'] because of validation limitations. Also, they are
+  // only passed in as $items when editing existing entities.
+  $field_state = field_form_get_state($element['#field_parents'], $field['field_name'], $langcode, $form_state);
+  if (isset($field_state['items'])) {
+    $items = $field_state['items'];
+  }
+
+  // Essentially we use the managed_file type, extended with some enhancements.
+  $element_info = element_info('managed_file');
+  $widget = array(
+    '#type' => 'managed_file',
+    '#upload_location' => file_field_widget_uri($field, $instance),
+    '#upload_validators' => file_field_widget_upload_validators($field, $instance),
+    '#value_callback' => 'moha_ui_field_widget_value',
+    '#process' => array_merge($element_info['#process'],array('image_field_widget_process')),
+    '#progress_indicator' => $instance['widget']['settings']['progress_indicator'],
+    // Allows this field to return an array instead of a single value.
+    '#extended' => TRUE,
+  );
+  $element += $widget;
+
+  $elements['moha_ui_preview'] = array(
+    '#type' => 'markup',
+    '#markup' => '<div style="overflow:auto;"><ul id="moha_ui_preview"></ul></div>',
+    '#file' => FALSE,
+  );
+
+  if ($field['cardinality'] == 1) {
+    // Set the default value.
+    $element['#default_value'] = !empty($items) ? $items[0] : $defaults;
+    // If there's only one field, return it as delta 0.
+    if (empty($element['#default_value']['fid'])) {
+      $element['#description'] = theme('file_upload_help', array('description' => $element['#description'], 'upload_validators' => $element['#upload_validators']));
+    }
+    $elements = array($element);
+  }
+  else {
+    if(empty($items)){
+      foreach ($default_items as $item) {
+        $element['#delta'] = $delta;
+        $elements[$delta] = $element;
+        $elements[$delta]['#default_value'] = $item;
+        $elements[$delta]['#weight'] = $delta;
+        $elements[$delta]['#description'] = theme('file_upload_help', array('description' => $element['#description'], 'upload_validators' => $element['#upload_validators']));
+        $delta++;
+      }
+    } else {
+      // If there are multiple values, add an element for each existing one.
+      foreach ($items as $item) {
+        $element['#delta'] = $delta;
+        $elements[$delta] = $element;
+        $elements[$delta]['#default_value'] = $item;
+        $elements[$delta]['#weight'] = $delta;
+        $delta++;
+      }
+    }
 
 
-//  if($element['#delta']== 0){
-//    dpm($element, 'after');
-//  }
+    if (($field['cardinality'] == FIELD_CARDINALITY_UNLIMITED || $delta < $field['cardinality']) && empty($form_state['programmed'])) {
+      $element['#delta'] = $delta;
+      $elements[$delta] = $element;
+      $elements[$delta]['#default_value'] = $defaults;
+      $elements[$delta]['#weight'] = $delta;
+      $elements[$delta]['#required'] = ($element['#required'] && $delta == 0);
+    }
+    // The group of elements all-together need some extra functionality
+    // after building up the full list (like draggable table rows).
+    $elements['#file_upload_delta'] = $delta;
+    $elements['#theme'] = 'moha_ui_file_widget_multiple';
+    $elements['#theme_wrappers'] = array('fieldset');
+    $elements['#process'] = array('file_field_widget_process_multiple', 'moha_ui_file_field_widget_process_multiple');
+    $elements['#title'] = $element['#title'];
+    $elements['#description'] = $element['#description'];
+    $elements['#field_name'] = $element['#field_name'];
+    $elements['#language'] = $element['#language'];
+    $elements['#display_field'] = $field['settings']['display_field'];
 
+    // Add some properties that will eventually be added to the file upload
+    // field. These are added here so that they may be referenced easily through
+    // a hook_form_alter().
+    $elements['#file_upload_title'] = t('Add a new file');
+    $elements['#file_upload_description'] = theme('file_upload_help', array('description' => '', 'upload_validators' => $elements[0]['#upload_validators']));
+
+  }
+
+  return $elements;
+}
+
+
+function theme_moha_ui_file_widget_multiple($variables) {
+  return theme_file_widget_multiple($variables);
+}
+
+function moha_ui_file_field_widget_process_multiple($element, &$form_state, $form){
   return $element;
 }
 
