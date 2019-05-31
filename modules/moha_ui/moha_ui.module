@@ -171,28 +171,106 @@ function moha_ui_field_widget_info() {
 function moha_ui_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
   libraries_load(__MOHA_UI);
   drupal_add_js(MOHA_UI__PATH.'/js/moha_ui.js');
+  //dpm($delta, 'delta');
+  //dpm($items, 'items');
 
+  $defaults = array(
+    'fid' => 0,
+    'display' => !empty($field['settings']['display_default']),
+    'description' => '',
+  );
+
+  $default_items = array();
+  for($i = 0; $i < $field['cardinality']; $i++){
+    $default_items[$i] = $defaults;
+  }
+
+  // Load the items for form rebuilds from the field state as they might not be
+  // in $form_state['values'] because of validation limitations. Also, they are
+  // only passed in as $items when editing existing entities.
+  $field_state = field_form_get_state($element['#field_parents'], $field['field_name'], $langcode, $form_state);
+  if (isset($field_state['items'])) {
+    $items = $field_state['items'];
+  }
+
+  // Essentially we use the managed_file type, extended with some enhancements.
+  $element_info = element_info('managed_file');
   $widget = array(
     '#type' => 'managed_file',
-    '#process' => array('moha_ui_file_process'),
-    '#value_callback' => 'moha_ui_file_value',
+    '#upload_location' => file_field_widget_uri($field, $instance),
+    '#upload_validators' => file_field_widget_upload_validators($field, $instance),
+    '#value_callback' => 'moha_ui_field_widget_value',
+    '#process' => array_merge($element_info['#process'],array('image_field_widget_process','moha_ui_file_process')),
+    '#progress_indicator' => $instance['widget']['settings']['progress_indicator'],
+    // Allows this field to return an array instead of a single value.
+    '#extended' => TRUE,
   );
-
   $element += $widget;
 
-  $form['moha_ui_file_values'] = array(
-    '#type' => 'hidden',
-    '#value' => NULL,
+  $elements['moha_ui_preview'] = array(
+    '#markup' => '<div style="overflow:auto;"><ul id="moha_ui_preview"></ul></div>',
   );
 
-  $form['moha_ui_field_name'] = array(
-    '#type' => 'hidden',
-    '#value' => $field['field_name'],
-  );
+  if ($field['cardinality'] == 1) {
+    // Set the default value.
+    $element['#default_value'] = !empty($items) ? $items[0] : $defaults;
+    // If there's only one field, return it as delta 0.
+    if (empty($element['#default_value']['fid'])) {
+      $element['#description'] = theme('file_upload_help', array('description' => $element['#description'], 'upload_validators' => $element['#upload_validators']));
+    }
+    $elements = array($element);
+  }
+  else {
+    if(empty($items)){
+      foreach ($default_items as $item) {
+        $element['#delta'] = $delta;
+        $elements[$delta] = $element;
+        $elements[$delta]['#default_value'] = $item;
+        $elements[$delta]['#weight'] = $delta;
+        $elements[$delta]['#description'] = theme('file_upload_help', array('description' => $element['#description'], 'upload_validators' => $element['#upload_validators']));
+        $delta++;
+      }
+    } else {
+      // If there are multiple values, add an element for each existing one.
+      foreach ($items as $item) {
+        $element['#delta'] = $delta;
+        $elements[$delta] = $element;
+        $elements[$delta]['#default_value'] = $item;
+        $elements[$delta]['#weight'] = $delta;
+        $delta++;
+      }
+    }
 
-  $form['#submit'][] = 'moha_ui_field_widget_submit';
 
-  return $element;
+    if (($field['cardinality'] == FIELD_CARDINALITY_UNLIMITED || $delta < $field['cardinality']) && empty($form_state['programmed'])) {
+      $element['#delta'] = $delta;
+      $elements[$delta] = $element;
+      $elements[$delta]['#default_value'] = $defaults;
+      $elements[$delta]['#weight'] = $delta;
+      //$elements[$delta]['#required'] = ($element['#required'] && $delta == 0);
+    }
+    // The group of elements all-together need some extra functionality
+    // after building up the full list (like draggable table rows).
+    $elements['#file_upload_delta'] = $delta;
+    //$elements['#theme'] = 'file_widget_multiple';
+    $elements['#theme_wrappers'] = array('fieldset');
+    //$elements['#process'] = array('file_field_widget_process_multiple');
+    $elements['#title'] = $element['#title'];
+    $elements['#description'] = $element['#description'];
+    $elements['#field_name'] = $element['#field_name'];
+    $elements['#language'] = $element['#language'];
+    //$elements['#display_field'] = $field['settings']['display_field'];
+
+    // Add some properties that will eventually be added to the file upload
+    // field. These are added here so that they may be referenced easily through
+    // a hook_form_alter().
+    $elements['#file_upload_title'] = t('Add a new file');
+    $elements['#file_upload_description'] = theme('file_upload_help', array('description' => '', 'upload_validators' => $elements[0]['#upload_validators']));
+
+  }
+
+  return $elements;
+
 }
 
 /**
@@ -284,123 +362,31 @@ function moha_ui_webform_component_info() {
   return $components;
 }
 
-function moha_ui_field_widget_submit($form, &$form_state) {
-
-  $field_name = $form_state['values']['moha_ui_field_name'];
-  $language = $form[$field_name]['#language'];
-  //$file_directory = $form_state['field'][$field_name][$language]['instance']['settings']['file_directory'];
-  //$file_extensions = $form_state['field'][$field_name][$language]['instance']['settings']['file_extensions'];
-
-
-  if($form_state['input']['moha_ui_file_values']) {
-    $file_values = explode(',,',$form_state['input']['moha_ui_file_values']);
-    $fids = array();
-    foreach($file_values as $content){
-      $file_contents = file_get_contents($content);
-      $file = file_save_data($file_contents);
-      $fids[] =  $file->fid;
-    }
-    if(!empty($fids)){
-      if(empty($form_state['input'][$field_name][$language]['fid'])){
-        $form_state['moha_ui_fids'] = $fids;
-      } else {
-        $old_fids = explode(' ', $form_state['input'][$field_name][$language]['fid']);
-        $form_state['moha_ui_insert_fids'] = $fids;
-        $form_state['moha_ui_fids'] = array_merge($old_fids, $fids);
-      }
-      $form_state['rebuild'] = true;
-    }
-  }
-
-}
-
-
-
-function moha_ui_file_value(&$element, $input = FALSE, $form_state = NULL) {
-
-  $return['fid'] = array();
-
-  if ($input !== FALSE) {
-    if(isset($form_state['moha_ui_fids'])){
-      $entity_type = $element['#entity_type'];
-      $entity = $element['#entity'];
-      $field_name = $element['#field_name'];
-      $langcode = $element['#language'];
-      $field = $form_state['field'][$field_name][$langcode]['instance'];
-      $instance = $form_state['field'][$field_name][$langcode]['instance'];
-
-      $items = array();
-      foreach($form_state['moha_ui_fids'] as $key => $fid ){
-        $items[$key] = array('fid'=> $fid);
-        $entity->$field_name[$langcode][$key]['fid'] = $fid;
-      }
-//      if(empty($form_state['input'][$field_name][$langcode]['fid'])){
-//        file_field_insert($entity_type, $entity, $field, $instance, $langcode,$items);
-//      } else {
-//        list($id, $vid, $bundle) = entity_extract_ids($entity_type, $entity);
-//        // Add a new usage of each uploaded file.
-//        foreach ($items as $item) {
-//          if(in_array($item['fid'], $form_state['moha_ui_insert_fids'])){
-//            $file = (object) $item;
-//            file_usage_add($file, 'file', $entity_type, $id);
-//          }
-//        }
-//      }
-
-      //save field value record
-      $info = field_info_field($field_name);
-      $fields = array($info['id']);
-      field_sql_storage_field_storage_write($entity_type, $entity, 'update', $fields);
-      $return = $items;
-      drupal_goto($form_state['redirect']);
-    }
-  } else {
-    $field_name = $element['#field_name'];
-    if(isset($element['#entity']->$field_name)){
-      $field_values = $element['#entity']->$field_name;
-      //$return = $field_values[$element['#language']];
-      foreach($field_values[$element['#language']] as $value){
-        $return['fid'][] = $value['fid'];
-      }
-    }
-
-  }
-
+function moha_ui_field_widget_value($element, $input = FALSE, $form_state = NULL) {
+  $return = file_field_widget_value($element, $input, $form_state);
   return $return;
 }
 
 
-function moha_ui_file_process($element, &$form_state, $form) {
+function moha_ui_file_process($element, $form_state, $form) {
+//  if($element['#delta']== 0){
+//    dpm($element, 'before');
+//  }
 
-  $original_id = $element['#id'];
-  $element['#id'] .= '-upload';
-  $fid = isset($element['#value']['fid']) ? $element['#value']['fid'] : 0;
 
-  $element['fid'] = array(
-    '#type' => 'hidden',
-    '#value' => $fid,
-  );
+ if($element['fid']['#value'] == 0){
+   $element['upload']['#prefix'] = '<div class="weui-cells weui-cells_form" id="uploaderCustom">
+     <div class="weui-uploader__bd">
+     <div class="weui-uploader__input-box">';
+   $element['upload']['#suffix'] = '</div></div></div>';
+   $element['upload']['#attributes'] = array('class' => array('weui-uploader__input'));
+   $element['upload_button']['#type'] = 'hidden';
+ }
 
-  $image_display='';
-  if($fid){
-    foreach($fid as $item_fid){
-      $file = file_load($item_fid);
-      $fileUrl = file_create_url($file->uri);
-      $image_display .= '<li class="weui-uploader__file" style="background-image:url(' . $fileUrl . '");></li>';
-    }
-  }
 
-  $element['markup'] = array(
-    '#markup' => '
-      <div class="weui-cells weui-cells_form" id="uploaderCustom">
-        <div class="weui-uploader__bd">
-          <ul class="weui-uploader__files" id="uploaderCustomFiles">' . $image_display . '</ul>
-          <div class="weui-uploader__input-box">
-            <input id="uploaderCustomInput" class="weui-uploader__input" type="file" accept="image/*"  multiple="">
-          </div>
-        </div>
-      </div>',
-  );
+//  if($element['#delta']== 0){
+//    dpm($element, 'after');
+//  }
 
   return $element;
 }

@@ -14,29 +14,23 @@ function getFileUrl(sourceId) {
   return url;
 }
 
+function getAjaxWrapperId(id){
+  var regex = /upload$/g;
+  var replaced_id = id.replace(regex, "ajax-wrapper");
+  return replaced_id;
+}
+
 
 (function ($) {
 
-  var count = 0;
-  var fileList=[];
   $(function() {
-    $("#uploaderCustomInput").change(function () {
-
-      var file = $("#uploaderCustomInput").val();
+    $("input:file").change(function () {
+      var file = $("#"+this.id).val();
       if(file){
-
         var fileUrl = getFileUrl(this.id);
-        $("ul#uploaderCustomFiles").append("<li class='weui-uploader__file' style='background-image:url(" + fileUrl + ");'></li>");
-
-        var reader = new FileReader();
-        reader.onloadend = function(event) {
-          var base64data = event.target.result
-          fileList.push(base64data + ",");
-          $("input[name='moha_ui_file_values']:hidden").val(fileList);
-        }
-        reader.readAsDataURL(this.files[0]);
-
-        count++;
+        var ajaxWrapperId = getAjaxWrapperId(this.id);
+        $("#moha_ui_preview").append("<li class='weui-uploader__file' style='background-image:url(" + fileUrl + ");'></li>");
+        $("#"+ajaxWrapperId).css("display","none");
       } else {
         //alert('blank');
       }
